@@ -164,34 +164,22 @@
 #     app.run(debug=False)
 
 
-import streamlit as st
+
+# code 2
+
+# app.py (Streamlit version; prediction logic preserved)
+import os
+import io
+import re
+import uuid
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.utils import load_img, img_to_array
+import streamlit as st
+from PIL import Image
 
-# -------------------------------
-# Load the model once (cached)
-# -------------------------------
-@st.cache_resource
-def load_model():
-    try:
-        model = tf.keras.models.load_model("Crop_Disease_Detection.keras")
-        st.success("✅ Model loaded successfully!")
-        return model
-    except Exception as e:
-        st.error(f"❌ Error loading model: {e}")
-        # Placeholder model (for testing UI if real model missing)
-        inputs = tf.keras.layers.Input(shape=(160, 160, 3))
-        x = tf.keras.layers.Conv2D(16, (3, 3), activation="relu")(inputs)
-        x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        outputs = tf.keras.layers.Dense(39, activation="softmax")(x)
-        return tf.keras.Model(inputs=inputs, outputs=outputs)
-
-model = load_model()
-
-# -------------------------------
-# Class labels
-# -------------------------------
+# -------------------------
+# Labels (unchanged)
+# -------------------------
 class_labels = [
     'Apple___Apple_scab',
     'Apple___Black_rot',
@@ -234,9 +222,9 @@ class_labels = [
     'Tomato___healthy'
 ]
 
-# -------------------------------
-# Disease info dictionary
-# -------------------------------
+# -------------------------
+# Disease info (unchanged)
+# -------------------------
 disease_info = {
     'Apple___Apple_scab': {
         'description': 'Apple scab is a common disease of apple trees caused by the fungus Venturia inaequalis.',
@@ -253,45 +241,148 @@ disease_info = {
     }
 }
 
-# -------------------------------
-# Preprocess function
-# -------------------------------
-def preprocess_image(image):
-    img = load_img(image, target_size=(160, 160), color_mode="rgb")
-    img_array = img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0) / 255.0
-    return img_array
+# -------------------------
+# Ensure uploads directory exists (keeps parity with your Flask logic)
+# -------------------------
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# -------------------------------
-# Streamlit UI
-# -------------------------------
-st.set_page_config(page_title="🌱 Crop Disease Detection", layout="centered")
+# -------------------------
+# Model loader (cached for Streamlit)
+# -------------------------
+@st.cache_resource
+def load_model_cached():
+    """
+    Try to load your saved model file 'Crop_Disease_Detection.keras'.
+    If it fails, create the same placeholder model you used previously.
+    """
+    try:
+        model = tf.keras.models.load_model('Crop_Disease_Detection.keras')
+        print("Model loaded successfully!")
+        return model
+    except Exception as e:
+        # print similar to your original code
+        print(f"Error loading model: {e}")
+        print("Using a placeholder model for now...")
+        # Create the placeholder model (same as your original)
+        inputs = tf.keras.layers.Input(shape=(160, 160, 3))
+        x = tf.keras.layers.Conv2D(16, (3, 3), activation='relu')(inputs)
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        outputs = tf.keras.layers.Dense(len(class_labels), activation='softmax')(x)
+        return tf.keras.Model(inputs=inputs, outputs=outputs)
 
+model = load_model_cached()
+
+# -------------------------
+# Safe filename helper (no werkzeug required)
+# -------------------------
+def safe_filename(filename: str) -> str:
+    if not filename:
+        return f"{uuid.uuid4().hex}.jpg"
+    name = os.path.basename(filename)
+    name = name.replace(" ", "_")
+    name = re.sub(r'[^A-Za-z0-9_.-]', '', name)
+    if name == "":
+        return f"{uuid.uuid4().hex}.jpg"
+    return name
+
+# -------------------------
+# Preprocess the image robustly (ensures RGB 3 channels, exact 160x160)
+# -------------------------
+def preprocess_image_filebytes(file_bytes: bytes, target_size=(160, 160)):
+    """
+    Input: raw bytes of an image (from Streamlit uploader)
+    Output: numpy array shape (1, 160, 160, 3) with values [0,1]
+    """
+    # open with PIL from bytes, convert to RGB (ensures 3 channels)
+    img = Image.open(io.BytesIO(file_bytes))
+    img = img.convert("RGB")  # THIS fixes the 1-channel (grayscale) problem
+    # Choose an appropriate resampling filter
+    try:
+        resample = Image.Resampling.LANCZOS
+    except Exception:
+        # Pillow older versions
+        resample = Image.LANCZOS if hasattr(Image, "LANCZOS") else Image.ANTIALIAS
+    img = img.resize(target_size, resample)
+    arr = np.array(img).astype(np.float32) / 255.0
+    # Ensure shape: (1, H, W, C)
+    if arr.ndim == 2:
+        arr = np.stack([arr, arr, arr], axis=-1)
+    arr = np.expand_dims(arr, axis=0)
+    return arr
+
+# -------------------------
+# Streamlit UI (keeps result format same as Flask: class, confidence, description, treatment)
+# -------------------------
+st.set_page_config(page_title="Crop Disease Detection", layout="centered")
 st.title("🌱 Crop Disease Detection")
-st.markdown("Upload a leaf image to detect possible diseases and get treatment recommendations.")
+st.markdown("Upload a leaf image to detect disease and get treatment recommendations.")
 
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Upload an image (jpg / jpeg / png)", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
+    # Show preview
+    try:
+        # streamlit's uploaded_file supports .getvalue() or .read()
+        file_bytes = uploaded_file.read()
+        # display using PIL to avoid accidental channel issues in Streamlit preview
+        preview_img = Image.open(io.BytesIO(file_bytes))
+        st.image(preview_img, caption="Uploaded Image", use_column_width=True)
+    except Exception as e:
+        st.error(f"Error reading uploaded image: {e}")
+        file_bytes = None
 
-    if st.button("🔍 Predict"):
-        if model:
+    if st.button("🔍 Predict") and file_bytes is not None:
+        # Save uploaded file into uploads folder (like your Flask logic)
+        try:
+            filename = safe_filename(getattr(uploaded_file, "name", None))
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            with open(file_path, "wb") as f:
+                f.write(file_bytes)
+        except Exception as e:
+            st.warning(f"Could not save uploaded file to disk: {e}")
+            file_path = None
+
+        # Preprocess and predict (same core logic as your Flask version)
+        try:
+            img_array = preprocess_image_filebytes(file_bytes)  # ensures shape (1,160,160,3)
+
+            # Extra guard: if model expects different channel count, attempt fix (shouldn't be needed because of convert('RGB'))
             try:
-                img_array = preprocess_image(uploaded_file)
-                preds = model.predict(img_array)
-                class_idx = np.argmax(preds, axis=1)[0]
-                confidence = float(np.max(preds))
+                expected_channels = model.input_shape[-1]
+            except Exception:
+                expected_channels = None
 
-                predicted_class = class_labels[class_idx]
-                info = disease_info.get(predicted_class, disease_info["default"])
+            if expected_channels is not None and img_array.shape[-1] != expected_channels:
+                # example: model expects 3 but got 1 — we already converted to RGB so this is unlikely,
+                # but keep a safe fallback to repeat channels if needed.
+                if img_array.shape[-1] == 1 and expected_channels == 3:
+                    img_array = np.repeat(img_array, 3, axis=-1)
+                else:
+                    raise ValueError(f"Model expects {expected_channels} channels but image has {img_array.shape[-1]}")
 
-                st.success(f"**Prediction:** {predicted_class} ({confidence*100:.2f}% confidence)")
-                st.subheader("📝 Description")
-                st.write(info["description"])
-                st.subheader("💊 Treatment")
-                st.write(info["treatment"])
-            except Exception as e:
-                st.error(f"Prediction error: {e}")
-        else:
-            st.error("Model not loaded. Please check the model file.")
+            preds = model.predict(img_array)
+            class_idx = int(np.argmax(preds, axis=1)[0])
+            confidence = float(np.max(preds))
+
+            predicted_class = class_labels[class_idx]
+            info = disease_info.get(predicted_class, disease_info['default'])
+
+            result = {
+                'class': predicted_class,
+                'confidence': round(confidence * 100, 2),
+                'description': info['description'],
+                'treatment': info['treatment']
+            }
+
+            # Show the result (same keys as your Flask JSON)
+            st.success(f"Prediction: **{result['class']}** ({result['confidence']}% confidence)")
+            st.subheader("📝 Description")
+            st.write(result['description'])
+            st.subheader("💊 Treatment")
+            st.write(result['treatment'])
+            st.markdown("---")
+            st.json(result)
+
+        except Exception as e:
+            st.error(f"Prediction error: {e}")
