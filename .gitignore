@@ -45,3 +45,40 @@ logs/
 # OS specific
 .DS_Store
 Thumbs.db
+
+# -------------------------------
+# ML / DL specific (added)
+# -------------------------------
+
+# Model files
+*.keras
+*.h5
+*.hdf5
+*.ckpt
+*.pt
+*.pth
+*.pb
+*.tflite
+*.onnx
+*.weights
+*.pkl
+*.joblib
+*.npz
+
+# Dataset / Cache
+data/
+dataset/
+*.csv
+*.tsv
+*.arff
+*.parquet
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Checkpoints / Training logs
+checkpoints/
+*.ckpt
+*.log
+tensorboard/
