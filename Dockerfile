@@ -7,6 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 5000
+# Expose default Streamlit port
+EXPOSE 8501
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+# Use $PORT if provided, otherwise fallback to 8501
+CMD ["sh", "-c", "streamlit run app.py --server.port=${PORT:-8501} --server.address=0.0.0.0"]
